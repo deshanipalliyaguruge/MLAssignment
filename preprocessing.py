@@ -179,29 +179,35 @@ def preprocess(target_encode: bool = True) -> pd.DataFrame:
     condition_dummies = pd.get_dummies(df["condition"], prefix="cond", drop_first=False)
     df = pd.concat([df, condition_dummies], axis=1)
 
-    # ── 7. Target-encode brand and district (high cardinality) ────────────────
+    # ── 7. Target-encode brand, model, and district (high cardinality) ────────
     os.makedirs(ENCODER_DIR, exist_ok=True)
+    # Normalize model names
+    df["model"] = df["model"].str.strip().fillna("Unknown")
     if target_encode:
         te_brand    = TargetEncoder(cols=["brand"])
+        te_model    = TargetEncoder(cols=["model"])
         te_district = TargetEncoder(cols=["district"])
         df["brand_enc"]    = te_brand.fit_transform(df["brand"],    df["price"])
+        df["model_enc"]    = te_model.fit_transform(df["model"],    df["price"])
         df["district_enc"] = te_district.fit_transform(df["district"], df["price"])
         import joblib
         joblib.dump(te_brand,    os.path.join(ENCODER_DIR, "te_brand.pkl"))
+        joblib.dump(te_model,    os.path.join(ENCODER_DIR, "te_model.pkl"))
         joblib.dump(te_district, os.path.join(ENCODER_DIR, "te_district.pkl"))
-        logger.info("✓ Target encoders saved.")
+        logger.info("✓ Target encoders saved (brand, model, district).")
     else:
         le = LabelEncoder()
         df["brand_enc"]    = le.fit_transform(df["brand"].astype(str))
+        df["model_enc"]    = le.fit_transform(df["model"].astype(str))
         df["district_enc"] = le.fit_transform(df["district"].astype(str))
 
     # ── 8. Select final ML columns ─────────────────────────────────────────────
     feature_cols = (
         ["storage", "ram", "warranty", "days_since_posted",
-         "brand_enc", "district_enc"]
+         "brand_enc", "model_enc", "district_enc"]
         + [c for c in df.columns if c.startswith("cond_")]
     )
-    df_clean = df[feature_cols + ["price", "brand", "district", "condition"]].copy()
+    df_clean = df[feature_cols + ["price", "brand", "model", "district", "condition"]].copy()
     df_clean.dropna(subset=feature_cols, inplace=True)
 
     logger.info(f"Final clean shape: {df_clean.shape}")

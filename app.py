@@ -92,6 +92,7 @@ BASE_DIR          = os.path.dirname(__file__)
 MODEL_PATH        = os.path.join(BASE_DIR, "models", "lgbm_model.pkl")
 FEATURES_PATH     = os.path.join(BASE_DIR, "models", "feature_cols.pkl")
 TE_BRAND_PATH     = os.path.join(BASE_DIR, "models", "te_brand.pkl")
+TE_MODEL_PATH     = os.path.join(BASE_DIR, "models", "te_model.pkl")
 TE_DISTRICT_PATH  = os.path.join(BASE_DIR, "models", "te_district.pkl")
 CLEAN_CSV         = os.path.join(BASE_DIR, "data", "cleaned_data.csv")
 
@@ -100,10 +101,11 @@ def load_model():
     model        = joblib.load(MODEL_PATH)
     feature_cols = joblib.load(FEATURES_PATH)
     te_brand     = joblib.load(TE_BRAND_PATH)
+    te_model     = joblib.load(TE_MODEL_PATH)
     te_district  = joblib.load(TE_DISTRICT_PATH)
     df_ref       = pd.read_csv(CLEAN_CSV)
     explainer    = shap.TreeExplainer(model)
-    return model, feature_cols, te_brand, te_district, df_ref, explainer
+    return model, feature_cols, te_brand, te_model, te_district, df_ref, explainer
 
 
 FEATURE_LABELS = {
@@ -112,6 +114,7 @@ FEATURE_LABELS = {
     "warranty":          "Warranty",
     "days_since_posted": "Days Since Posted",
     "brand_enc":         "Brand",
+    "model_enc":         "Model",
     "district_enc":      "District",
     "cond_Like New":     "Condition: Like New",
     "cond_New":          "Condition: New",
@@ -120,8 +123,34 @@ FEATURE_LABELS = {
 
 BRANDS = [
     "Samsung", "Apple", "Huawei", "Xiaomi", "Oppo", "Vivo",
-    "Realme", "Nokia", "Motorola", "Sony", "Oneplus", "Other"
+    "Realme", "Nokia", "Motorola", "Sony", "Oneplus", "Redmi", "Other"
 ]
+
+BRAND_MODELS = {
+    "Apple":    ["iPhone 11", "iPhone 12", "iPhone 12 Pro", "iPhone 13",
+                 "iPhone 13 Pro", "iPhone 14", "iPhone 14 Pro", "iPhone SE",
+                 "iPhone X", "iPhone XR", "iPhone XS Max", "iPhone 15"],
+    "Samsung":  ["Galaxy A12", "Galaxy A32", "Galaxy A52", "Galaxy A53",
+                 "Galaxy A72", "Galaxy S21", "Galaxy S22", "Galaxy S23",
+                 "Galaxy A23", "Galaxy A13", "Galaxy M12", "Galaxy M32"],
+    "Xiaomi":   ["Redmi Note 10", "Redmi Note 11", "Redmi 10C", "Poco X3",
+                 "Poco M4 Pro", "Mi 11 Lite", "Redmi Note 12", "Redmi 12C"],
+    "Redmi":    ["Redmi 9A", "Redmi 10", "Redmi Note 9", "Redmi 9C", "Redmi 12"],
+    "Oppo":     ["Oppo A54", "Oppo A74", "Oppo A92", "Oppo Reno 5",
+                 "Oppo A16", "Oppo A57", "Oppo F19"],
+    "Vivo":     ["Vivo Y20", "Vivo Y21s", "Vivo Y33s", "Vivo Y53s",
+                 "Vivo Y75", "Vivo V21"],
+    "Realme":   ["Realme 8", "Realme 9", "Realme C25", "Realme C30",
+                 "Realme Narzo 50", "Realme GT Neo 2"],
+    "Huawei":   ["Huawei P30", "Huawei P30 Pro", "Huawei Y7a", "Huawei Nova 5T",
+                 "Huawei P40 Lite", "Huawei Mate 30"],
+    "Nokia":    ["Nokia G20", "Nokia G21", "Nokia 5.4", "Nokia 3.4", "Nokia G10"],
+    "Motorola": ["Moto G30", "Moto G60", "Moto G62", "Moto E40"],
+    "Sony":     ["Sony Xperia 10", "Sony Xperia 1 III", "Sony Xperia 5 III"],
+    "Oneplus":  ["OnePlus 9", "OnePlus 9R", "OnePlus Nord CE", "OnePlus 10 Pro"],
+    "Other":    ["Tecno Pop 5", "Infinix Hot 12", "Itel A49", "Tecno Spark 8"],
+}
+
 DISTRICTS = [
     "Colombo", "Gampaha", "Kalutara", "Kandy", "Matale", "Nuwara Eliya",
     "Galle", "Matara", "Hambantota", "Jaffna", "Kilinochchi", "Mannar",
@@ -135,14 +164,16 @@ RAM_OPT     = [1, 2, 3, 4, 6, 8, 12, 16]
 
 
 # ── Build Feature Vector ───────────────────────────────────────────────────────
-def build_input(brand, district, condition, storage, ram, warranty,
-                days_since, feature_cols, te_brand, te_district) -> pd.DataFrame:
+def build_input(brand, phone_model, district, condition, storage, ram, warranty,
+                days_since, feature_cols, te_brand, te_model, te_district) -> pd.DataFrame:
     """Construct a single-row DataFrame matching the training feature schema."""
     row = {c: 0.0 for c in feature_cols}
-    # Use transform (not fit_transform) on a temp DF (TargetEncoder only needs the feature column during transform)
+    # Use transform (not fit_transform) on a temp DF
     tmp_brand    = pd.DataFrame({"brand": [brand]})
+    tmp_model    = pd.DataFrame({"model": [phone_model]})
     tmp_district = pd.DataFrame({"district": [district]})
     row["brand_enc"]    = float(te_brand.transform(tmp_brand)["brand"].iloc[0])
+    row["model_enc"]    = float(te_model.transform(tmp_model)["model"].iloc[0])
     row["district_enc"] = float(te_district.transform(tmp_district)["district"].iloc[0])
     row["storage"]           = float(storage)
     row["ram"]               = float(ram)
@@ -158,7 +189,7 @@ def build_input(brand, district, condition, storage, ram, warranty,
 
 # ── SHAP Explainability Helpers ───────────────────────────────────────────────
 def compute_shap_impacts(explainer, input_df: pd.DataFrame,
-                         brand, district, condition,
+                         brand, phone_model, district, condition,
                          storage, ram, warranty, days_since, price):
     """
     Returns a list of (readable_label, rs_impact) sorted by absolute impact,
@@ -172,6 +203,7 @@ def compute_shap_impacts(explainer, input_df: pd.DataFrame,
 
     READABLE = {
         "brand_enc":         brand,
+        "model_enc":         phone_model,
         "district_enc":      district,
         "storage":           f"{int(storage)} GB Storage",
         "ram":               f"{int(ram)} GB RAM",
@@ -277,7 +309,7 @@ if not os.path.exists(MODEL_PATH):
     )
     st.stop()
 
-model, feature_cols, te_brand, te_district, df_ref, explainer = load_model()
+model, feature_cols, te_brand, te_model, te_district, df_ref, explainer = load_model()
 
 # ── Sidebar Inputs ─────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -285,6 +317,9 @@ with st.sidebar:
     st.markdown("---")
 
     brand     = st.selectbox("🏷️ Brand",        BRANDS,         index=0)
+    # Filter models by selected brand
+    available_models = BRAND_MODELS.get(brand, ["Unknown"])
+    phone_model = st.selectbox("📱 Model", available_models, index=0)
     condition = st.selectbox("⭐ Condition",     CONDITIONS,     index=0)
     storage   = st.selectbox("💾 Storage (GB)", STORAGE_OPT,    index=4)    # default 128
     ram       = st.selectbox("🧠 RAM (GB)",     RAM_OPT,        index=3)    # default 4
@@ -303,7 +338,7 @@ with col1:
     st.markdown("""
 <div class='info-box'>
 <strong>Algorithm:</strong> LightGBM (Gradient Boosted Trees)<br>
-<strong>Training data:</strong> ~1,800 listings scraped from ikman.lk<br>
+<strong>Training data:</strong> ~5,000 listings scraped from ikman.lk<br>
 <strong>XAI method:</strong> SHAP (SHapley Additive exPlanations)<br>
 <strong>Target:</strong> Resale price in Sri Lankan Rupees (LKR)
 </div>
@@ -321,8 +356,8 @@ with col2:
     if predict_btn:
         try:
             input_df = build_input(
-                brand, district, condition, storage, ram, warranty, days,
-                feature_cols, te_brand, te_district
+                brand, phone_model, district, condition, storage, ram, warranty, days,
+                feature_cols, te_brand, te_model, te_district
             )
             log_pred = model.predict(input_df)[0]
             price    = np.expm1(log_pred)
@@ -341,7 +376,7 @@ with col2:
 
             # ── Compute SHAP impacts ───────────────────────────────────────
             impacts, base_price, shap_obj = compute_shap_impacts(
-                explainer, input_df, brand, district, condition,
+                explainer, input_df, brand, phone_model, district, condition,
                 storage, ram, warranty, days, price
             )
 

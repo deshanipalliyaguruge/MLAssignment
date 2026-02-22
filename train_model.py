@@ -57,7 +57,7 @@ os.makedirs(PLOTS_DIR, exist_ok=True)
 # ── Feature columns (must match preprocessing.py output) ─────────────────────
 FEATURE_COLS = [
     "storage", "ram", "warranty", "days_since_posted",
-    "brand_enc", "district_enc",
+    "brand_enc", "model_enc", "district_enc",
     "cond_Like New", "cond_New", "cond_Used",
 ]
 TARGET_COL = "price"
@@ -207,7 +207,7 @@ def main():
     X_train, X_test, y_train, y_test = split_data(X, y)
 
     # Hyperparameter tuning
-    best_params = tune_hyperparameters(X_train, y_train, n_trials=50)
+    best_params = tune_hyperparameters(X_train, y_train, n_trials=80)
 
     # Final training
     logger.info("Training final model with best hyperparameters…")

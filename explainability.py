@@ -28,7 +28,7 @@ import matplotlib.pyplot as plt
 import shap
 import lightgbm as lgb
 
-from sklearn.inspection import PartialDependenceDisplay
+# PartialDependenceDisplay replaced with manual PDP implementation
 
 warnings.filterwarnings("ignore")
 
@@ -54,6 +54,7 @@ FEATURE_LABELS = {
     "warranty":          "Warranty (1=Yes)",
     "days_since_posted": "Days Since Posted",
     "brand_enc":         "Brand (Encoded)",
+    "model_enc":         "Model (Encoded)",
     "district_enc":      "District (Encoded)",
     "cond_Like New":     "Condition: Like New",
     "cond_New":          "Condition: New",
@@ -139,10 +140,8 @@ def plot_feature_importance(model, feature_cols: list[str]) -> None:
 # ── 3. Partial Dependence Plots ────────────────────────────────────────────────
 def plot_pdp(model, X: pd.DataFrame, feature: str, label: str) -> None:
     """
-    A PDP shows the marginal effect of one feature on the predicted outcome
-    while averaging out all other features. This reveals the overall
-    relationship between a feature and the target, regardless of correlations.
-    Predictions are in log-price space; we exponentiate for interpretability.
+    Manual PDP implementation to avoid sklearn feature_names_in_ compatibility
+    issues with LightGBM. Computes partial dependence values directly.
     """
     if feature not in X.columns:
         logger.warning(f"Feature '{feature}' not found in dataset. Skipping PDP.")
@@ -150,26 +149,37 @@ def plot_pdp(model, X: pd.DataFrame, feature: str, label: str) -> None:
 
     feature_idx = list(X.columns).index(feature)
 
-    fig, ax = plt.subplots(figsize=(8, 5))
-    disp = PartialDependenceDisplay.from_estimator(
-        model, X, features=[feature],
-        ax=ax, grid_resolution=30
-    )
-    plt.title(f"PDP: {FEATURE_LABELS.get(feature, feature)}", fontsize=14)
-    # Convert log-price y-axis ticks to actual LKR values
-    y_ticks = ax.get_yticks()
-    ax.set_yticklabels([f"Rs. {np.expm1(v):,.0f}" for v in y_ticks])
-    ax.set_xlabel(FEATURE_LABELS.get(feature, feature), fontsize=11)
-    ax.set_ylabel("Predicted Price (LKR)", fontsize=11)
-    ax.set_title(f"Partial Dependence Plot — {FEATURE_LABELS.get(feature, feature)}",
-                 fontsize=13, fontweight="bold")
-    ax.spines[["top", "right"]].set_visible(False)
-    plt.tight_layout()
-    safe_name = feature.replace(" ", "_").replace(":", "")
-    path = os.path.join(PLOTS_DIR, f"pdp_{safe_name}.png")
-    plt.savefig(path, dpi=150)
-    plt.close()
-    logger.info(f"✓ PDP saved → {path}")
+    try:
+        # Fully manual PDP: no sklearn partial_dependence needed
+        grid_vals = np.linspace(X[feature].min(), X[feature].max(), 30)
+        # Use a subsample for speed
+        X_sub = X.sample(min(500, len(X)), random_state=42).copy()
+        avg_preds = []
+        for val in grid_vals:
+            X_temp = X_sub.copy()
+            X_temp.iloc[:, feature_idx] = val
+            preds = model.predict(X_temp)
+            avg_preds.append(preds.mean())
+        avg_preds = np.array(avg_preds)
+
+        fig, ax = plt.subplots(figsize=(8, 5))
+        ax.plot(grid_vals, avg_preds, color="#4C72B0", linewidth=2.5)
+        ax.fill_between(grid_vals, avg_preds, alpha=0.1, color="#4C72B0")
+        ax.set_xlabel(FEATURE_LABELS.get(feature, feature), fontsize=11)
+        ax.set_ylabel("Partial Dependence (log-price)", fontsize=11)
+        ax.set_title(f"Partial Dependence Plot — {FEATURE_LABELS.get(feature, feature)}",
+                     fontsize=13, fontweight="bold")
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.grid(axis="y", alpha=0.3)
+        plt.tight_layout()
+        safe_name = feature.replace(" ", "_").replace(":", "")
+        path = os.path.join(PLOTS_DIR, f"pdp_{safe_name}.png")
+        plt.savefig(path, dpi=150)
+        plt.close()
+        logger.info(f"✓ PDP saved → {path}")
+    except Exception as e:
+        logger.warning(f"PDP for '{feature}' failed: {e}")
+        plt.close("all")
 
 
 # ── 4. SHAP Dependence Plot ────────────────────────────────────────────────────
@@ -204,22 +214,21 @@ def plot_shap_dependence(shap_values, X: pd.DataFrame,
 def main():
     model, feature_cols, X, y = load_artifacts()
 
-    # Only use a sample for speed (SHAP is O(n * features))
-    X_sample = X.sample(min(500, len(X)), random_state=42)
-
-    # 1. SHAP summary
-    explainer, shap_values = plot_shap_summary(model, X_sample)
-
-    # 2. Feature importance
+    # 1. Feature importance (no side effects)
     plot_feature_importance(model, list(X.columns))
 
-    # 3. PDPs for top features
-    for feat in ["storage", "ram", "brand_enc", "district_enc"]:
+    # 2. PDPs for top features (must run BEFORE SHAP renames columns)
+    for feat in ["storage", "ram", "brand_enc", "model_enc", "district_enc"]:
         plot_pdp(model, X, feat, FEATURE_LABELS.get(feat, feat))
 
-    # 4. SHAP dependence plots
+    # 3. SHAP summary (uses a sample copy to avoid modifying original X)
+    X_sample = X.sample(min(500, len(X)), random_state=42).copy()
+    explainer, shap_values = plot_shap_summary(model, X_sample)
+
+    # 4. SHAP dependence plots (use a fresh copy)
+    X_dep = X.sample(min(500, len(X)), random_state=42).copy()
     for feat in ["storage", "brand_enc"]:
-        plot_shap_dependence(shap_values, X_sample, feat)
+        plot_shap_dependence(shap_values, X_dep, feat)
 
     print("\n✓ All explainability plots saved to:", PLOTS_DIR)
 
