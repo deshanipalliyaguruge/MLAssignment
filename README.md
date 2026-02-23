@@ -20,7 +20,6 @@ Assignment3/
 │   └── te_district.pkl       ← district target encoder
 ├── plots/                    ← all output charts
 ├── scraping.py               ← Selenium scraper (ikman.lk)
-├── generate_dataset.py       ← synthetic data fallback
 ├── preprocessing.py          ← cleaning & feature engineering
 ├── train_model.py            ← LightGBM + Optuna tuning
 ├── explainability.py         ← SHAP, PDP, feature importance
