@@ -297,7 +297,7 @@ def waterfall_plot(shap_obj, input_df: pd.DataFrame) -> plt.Figure:
 st.markdown("""
 <div class="main-header">
   <h1>📱 Sri Lanka Used Phone Price Predictor</h1>
-  <p>Powered by LightGBM · Explained by SHAP · Data from ikman.lk</p>
+  <p>Powered by LightGBM · Explained by SHAP</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -331,42 +331,20 @@ with st.sidebar:
     predict_btn = st.button("🔮 Predict Price")
 
 # ── Main Panel ─────────────────────────────────────────────────────────────────
-col1, col2 = st.columns([1, 1], gap="large")
+if predict_btn:
+    try:
+        input_df = build_input(
+            brand, phone_model, district, condition, storage, ram, warranty, days,
+            feature_cols, te_brand, te_model, te_district
+        )
+        log_pred = model.predict(input_df)[0]
+        price    = np.expm1(log_pred)
 
-with col1:
-    st.markdown("### 📊 How It Works")
-    st.markdown("""
-<div class='info-box'>
-<strong>Algorithm:</strong> LightGBM (Gradient Boosted Trees)<br>
-<strong>Training data:</strong> ~5,000 listings scraped from ikman.lk<br>
-<strong>XAI method:</strong> SHAP (SHapley Additive exPlanations)<br>
-<strong>Target:</strong> Resale price in Sri Lankan Rupees (LKR)
-</div>
-""", unsafe_allow_html=True)
+        # Confidence range ± 15% typical for tree models
+        low  = price * 0.85
+        high = price * 1.15
 
-    # Dataset stats
-    if os.path.exists(CLEAN_CSV):
-        df_stat = df_ref.copy()
-        c1, c2, c3 = st.columns(3)
-        c1.metric("📦 Total Listings", f"{len(df_stat):,}")
-        c2.metric("💰 Median Price", f"Rs. {df_stat['price'].median():,.0f}")
-        c3.metric("🏷️ Brands", f"{df_stat['brand'].nunique()}")
-
-with col2:
-    if predict_btn:
-        try:
-            input_df = build_input(
-                brand, phone_model, district, condition, storage, ram, warranty, days,
-                feature_cols, te_brand, te_model, te_district
-            )
-            log_pred = model.predict(input_df)[0]
-            price    = np.expm1(log_pred)
-
-            # Confidence range ± 15% typical for tree models
-            low  = price * 0.85
-            high = price * 1.15
-
-            st.markdown(f"""
+        st.markdown(f"""
 <div class='price-card'>
   <div class='label'>Estimated Resale Price</div>
   <div class='value'>Rs. {price:,.0f}</div>
@@ -374,27 +352,27 @@ with col2:
 </div>
 """, unsafe_allow_html=True)
 
-            # ── Compute SHAP impacts ───────────────────────────────────────
-            impacts, base_price, shap_obj = compute_shap_impacts(
-                explainer, input_df, brand, phone_model, district, condition,
-                storage, ram, warranty, days, price
-            )
+        # ── Compute SHAP impacts ───────────────────────────────────────
+        impacts, base_price, shap_obj = compute_shap_impacts(
+            explainer, input_df, brand, phone_model, district, condition,
+            storage, ram, warranty, days, price
+        )
 
-            # ── Layer 1: Natural Language Summary ─────────────────────────
-            st.markdown("### 💡 Why This Price?")
-            boosters  = [(l, v) for l, v in impacts if v > 0][:3]
-            reducers  = [(l, v) for l, v in impacts if v < 0][:2]
+        # ── Layer 1: Natural Language Summary ─────────────────────────
+        st.markdown("### 💡 Why This Price?")
+        boosters  = [(l, v) for l, v in impacts if v > 0][:3]
+        reducers  = [(l, v) for l, v in impacts if v < 0][:2]
 
-            bullets_up   = "".join(
-                f"<li>✅ <b>{l}</b> adds approximately <b>Rs. {v:,.0f}</b> to the value</li>"
-                for l, v in boosters
-            )
-            bullets_down = "".join(
-                f"<li>🔻 <b>{l}</b> reduces value by approximately <b>Rs. {abs(v):,.0f}</b></li>"
-                for l, v in reducers
-            ) if reducers else ""
+        bullets_up   = "".join(
+            f"<li>✅ <b>{l}</b> adds approximately <b>Rs. {v:,.0f}</b> to the value</li>"
+            for l, v in boosters
+        )
+        bullets_down = "".join(
+            f"<li>🔻 <b>{l}</b> reduces value by approximately <b>Rs. {abs(v):,.0f}</b></li>"
+            for l, v in reducers
+        ) if reducers else ""
 
-            st.markdown(f"""
+        st.markdown(f"""
 <div class='info-box'>
 <b>Baseline market price:</b> Rs. {base_price:,.0f}&nbsp;&nbsp;→&nbsp;&nbsp;
 <b>Predicted:</b> Rs. {price:,.0f}<br><br>
@@ -404,33 +382,33 @@ with col2:
 </div>
 """, unsafe_allow_html=True)
 
-            # ── Layer 2: Impact Bar Chart ──────────────────────────────────
-            st.markdown("### 📊 Price Factor Breakdown")
-            st.caption("Green bars = features that **increase** the price · "
-                       "Red bars = features that **decrease** the price")
-            fig_bars = plot_impact_bars(impacts, price)
-            st.pyplot(fig_bars)
+        # ── Layer 2: Impact Bar Chart ──────────────────────────────────
+        st.markdown("### 📊 Price Factor Breakdown")
+        st.caption("Green bars = features that **increase** the price · "
+                   "Red bars = features that **decrease** the price")
+        fig_bars = plot_impact_bars(impacts, price)
+        st.pyplot(fig_bars)
+        plt.close()
+
+        # ── Layer 3: Technical SHAP (expander) ────────────────────────
+        with st.expander("🔬 Technical SHAP Details (for advanced users)"):
+            st.caption(
+                "SHAP (SHapley Additive exPlanations) waterfall showing "
+                "each feature's exact contribution in log-price space."
+            )
+            fig_wf = waterfall_plot(shap_obj, input_df)
+            st.pyplot(fig_wf)
             plt.close()
 
-            # ── Layer 3: Technical SHAP (expander) ────────────────────────
-            with st.expander("🔬 Technical SHAP Details (for advanced users)"):
-                st.caption(
-                    "SHAP (SHapley Additive exPlanations) waterfall showing "
-                    "each feature's exact contribution in log-price space."
-                )
-                fig_wf = waterfall_plot(shap_obj, input_df)
-                st.pyplot(fig_wf)
-                plt.close()
-
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
-    else:
-        st.markdown("### 🔍 Prediction")
-        st.info("👈  Fill in the phone specs in the sidebar and click **Predict Price**.")
+    except Exception as e:
+        st.error(f"Prediction failed: {e}")
+else:
+    st.markdown("### 🔍 Prediction")
+    st.info("👈  Fill in the phone specs in the sidebar and click **Predict Price**.")
 
 # ── Footer ──────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.markdown(
-    "<center><sub>Academic project — University of Moratuwa · Machine Learning Assignment 3 · 2026</sub></center>",
+    "<center><sub>Academic project — University of Moratuwa · Machine Learning Assignment  · 2026</sub></center>",
     unsafe_allow_html=True,
 )
